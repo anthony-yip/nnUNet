@@ -1,0 +1,3 @@
+from ssnnunet.SS_utils import convert_supervised_to_semi_supervised
+
+convert_supervised_to_semi_supervised("Task003_Liver")
