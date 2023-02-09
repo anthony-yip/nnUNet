@@ -120,6 +120,7 @@ class ExperimentPlanner2D(ExperimentPlanner):
         self.plans_per_stage = []
 
         target_spacing_transposed = np.array(target_spacing)[self.transpose_forward]
+        print("the target spacing of the dataset (transposed) is ", target_spacing_transposed)
         median_shape_transposed = np.array(median_shape)[self.transpose_forward]
         print("the transposed median shape of the dataset is ", median_shape_transposed)
 

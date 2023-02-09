@@ -72,6 +72,7 @@ class ExperimentPlanner3D_v21(ExperimentPlanner):
         #median_size_in_mm = target[target_size_mm] * RESAMPLING_SEPARATE_Z_ANISOTROPY_THRESHOLD < max(target_size_mm)
 
         if has_aniso_spacing and has_aniso_voxels:
+            print("dataset has very anisotropic spacing and voxels, amending target spacing")
             spacings_of_that_axis = np.vstack(spacings)[:, worst_spacing_axis]
             target_spacing_of_that_axis = np.percentile(spacings_of_that_axis, 10)
             # don't let the spacing of that axis get higher than the other axes

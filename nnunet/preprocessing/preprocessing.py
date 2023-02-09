@@ -37,7 +37,7 @@ def get_lowres_axis(new_spacing):
 
 def resample_patient(data, seg, original_spacing, target_spacing, order_data=3, order_seg=0, force_separate_z=False,
                      order_z_data=0, order_z_seg=0,
-                     separate_z_anisotropy_threshold=RESAMPLING_SEPARATE_Z_ANISO_THRESHOLD):
+                     separate_z_anisotropy_threshold=RESAMPLING_SEPARATE_Z_ANISO_THRESHOLD, verbose=False):
     """
     :param data:
     :param seg:
@@ -85,7 +85,7 @@ def resample_patient(data, seg, original_spacing, target_spacing, order_data=3, 
 
     if axis is not None:
         if len(axis) == 3:
-            # every axis has the spacing, this should never happen, why is this code here?
+            # every axis has the same spacing, this should never happen, why is this code here?
             do_separate_z = False
         elif len(axis) == 2:
             # this happens for spacings like (0.24, 1.25, 1.25) for example. In that case we do not want to resample
@@ -96,17 +96,17 @@ def resample_patient(data, seg, original_spacing, target_spacing, order_data=3, 
 
     if data is not None:
         data_reshaped = resample_data_or_seg(data, new_shape, False, axis, order_data, do_separate_z,
-                                             order_z=order_z_data)
+                                             order_z=order_z_data, verbose=verbose)
     else:
         data_reshaped = None
     if seg is not None:
-        seg_reshaped = resample_data_or_seg(seg, new_shape, True, axis, order_seg, do_separate_z, order_z=order_z_seg)
+        seg_reshaped = resample_data_or_seg(seg, new_shape, True, axis, order_seg, do_separate_z, order_z=order_z_seg, verbose=verbose)
     else:
         seg_reshaped = None
     return data_reshaped, seg_reshaped
 
 
-def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separate_z=False, order_z=0):
+def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separate_z=False, order_z=0, verbose=False):
     """
     separate_z=True will resample with order 0 along z
     :param data:
@@ -116,6 +116,7 @@ def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separat
     :param order:
     :param do_separate_z:
     :param order_z: only applies if do_separate_z is True
+    :param verbose: True to print resampling messages. Default is False
     :return:
     """
     assert len(data.shape) == 4, "data must be (c, x, y, z)"
@@ -132,7 +133,8 @@ def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separat
     if np.any(shape != new_shape):
         data = data.astype(float)
         if do_separate_z:
-            print("separate z, order in z is", order_z, "order inplane is", order)
+            if verbose:
+                print("separate z, order in z is", order_z, "order inplane is", order)
             assert len(axis) == 1, "only one anisotropic axis supported"
             axis = axis[0]
             if axis == 0:
@@ -186,19 +188,22 @@ def resample_data_or_seg(data, new_shape, is_seg, axis=None, order=3, do_separat
                     reshaped_final_data.append(reshaped_data[None].astype(dtype_data))
             reshaped_final_data = np.vstack(reshaped_final_data)
         else:
-            print("no separate z, order", order)
+            if verbose:
+                print("no separate z, order", order)
             reshaped = []
             for c in range(data.shape[0]):
                 reshaped.append(resize_fn(data[c], new_shape, order, **kwargs)[None].astype(dtype_data))
             reshaped_final_data = np.vstack(reshaped)
         return reshaped_final_data.astype(dtype_data)
     else:
-        print("no resampling necessary")
+        if verbose:
+            print("no resampling necessary")
         return data
 
 
 class GenericPreprocessor(object):
-    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: (tuple, list), intensityproperties=None):
+    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: (tuple, list),
+                 intensityproperties=None, print_verbose=False):
         """
 
         :param normalization_scheme_per_modality: dict {0:'nonCT'}
@@ -213,6 +218,7 @@ class GenericPreprocessor(object):
         self.resample_separate_z_anisotropy_threshold = RESAMPLING_SEPARATE_Z_ANISO_THRESHOLD
         self.resample_order_data = 3
         self.resample_order_seg = 1
+        self.verbose = print_verbose
 
     @staticmethod
     def load_cropped(cropped_output_dir, case_identifier):
@@ -250,12 +256,13 @@ class GenericPreprocessor(object):
         data, seg = resample_patient(data, seg, np.array(original_spacing_transposed), target_spacing,
                                      self.resample_order_data, self.resample_order_seg,
                                      force_separate_z=force_separate_z, order_z_data=0, order_z_seg=0,
-                                     separate_z_anisotropy_threshold=self.resample_separate_z_anisotropy_threshold)
+                                     separate_z_anisotropy_threshold=self.resample_separate_z_anisotropy_threshold, verbose=self.verbose)
         after = {
             'spacing': target_spacing,
             'data.shape (data is resampled)': data.shape
         }
-        print("before:", before, "\nafter: ", after, "\n")
+        if self.verbose:
+            print("before:", before, "\nafter: ", after, "\n")
 
         if seg is not None:  # hippocampus 243 has one voxel with -2 as label. wtf?
             seg[seg < -1] = 0
@@ -296,7 +303,8 @@ class GenericPreprocessor(object):
                 if use_nonzero_mask[c]:
                     data[c][seg[-1] < 0] = 0
             elif scheme == 'noNorm':
-                print('no intensity normalization')
+                if self.verbose:
+                    print('no intensity normalization')
                 pass
             else:
                 if use_nonzero_mask[c]:
@@ -326,7 +334,7 @@ class GenericPreprocessor(object):
 
         data = data.transpose((0, *[i + 1 for i in self.transpose_forward]))
         seg = seg.transpose((0, *[i + 1 for i in self.transpose_forward]))
-
+        #where the action happens
         data, seg, properties = self.resample_and_normalize(data, target_spacing,
                                                             properties, seg, force_separate_z)
 
@@ -349,7 +357,8 @@ class GenericPreprocessor(object):
 
             selected = all_locs[rndst.choice(len(all_locs), target_num_samples, replace=False)]
             class_locs[c] = selected
-            print(c, target_num_samples)
+            if self.verbose:
+                print("class ", c, ", found ", target_num_samples, "samples")
         properties['class_locations'] = class_locs
 
         print("saving: ", os.path.join(output_folder_stage, "%s.npz" % case_identifier))
@@ -588,9 +597,9 @@ class Preprocessor3DBetterResampling(GenericPreprocessor):
 
 
 class PreprocessorFor2D(GenericPreprocessor):
-    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: (tuple, list), intensityproperties=None):
+    def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: (tuple, list), intensityproperties=None, print_verbose=False):
         super(PreprocessorFor2D, self).__init__(normalization_scheme_per_modality, use_nonzero_mask,
-                                                transpose_forward, intensityproperties)
+                                                transpose_forward, intensityproperties, print_verbose)
 
     def run(self, target_spacings, input_folder_with_cropped_npz, output_folder, data_identifier,
             num_threads=default_num_threads, force_separate_z=None):
@@ -630,12 +639,13 @@ class PreprocessorFor2D(GenericPreprocessor):
         target_spacing[0] = original_spacing_transposed[0]
         data, seg = resample_patient(data, seg, np.array(original_spacing_transposed), target_spacing, 3, 1,
                                      force_separate_z=force_separate_z, order_z_data=0, order_z_seg=0,
-                                     separate_z_anisotropy_threshold=self.resample_separate_z_anisotropy_threshold)
+                                     separate_z_anisotropy_threshold=self.resample_separate_z_anisotropy_threshold, verbose=self.verbose)
         after = {
             'spacing': target_spacing,
             'data.shape (data is resampled)': data.shape
         }
-        print("before:", before, "\nafter: ", after, "\n")
+        if self.verbose:
+            print("before:", before, "\nafter: ", after, "\n")
 
         if seg is not None:  # hippocampus 243 has one voxel with -2 as label. wtf?
             seg[seg < -1] = 0
@@ -649,8 +659,8 @@ class PreprocessorFor2D(GenericPreprocessor):
                                                                          "modalities"
         assert len(self.use_nonzero_mask) == len(data), "self.use_nonzero_mask must have as many entries as data" \
                                                         " has modalities"
-
-        print("normalization...")
+        if self.verbose:
+            print("normalization...")
 
         for c in range(len(data)):
             scheme = self.normalization_scheme_per_modality[c]
@@ -686,7 +696,8 @@ class PreprocessorFor2D(GenericPreprocessor):
                     mask = np.ones(seg.shape[1:], dtype=bool)
                 data[c][mask] = (data[c][mask] - data[c][mask].mean()) / (data[c][mask].std() + 1e-8)
                 data[c][mask == 0] = 0
-        print("normalization done")
+        if self.verbose:
+            print("normalization done")
         return data, seg, properties
 
 
