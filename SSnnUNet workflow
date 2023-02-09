@@ -12,23 +12,54 @@ Downloads/Raw_MSD/Task03_Liver
 ====70/y images
 
 x + y = 201
-20% as test: 40
-Out of 80% training, 10-90 or 20-80 labeled-unlabeled split. We shall go with 20-80 as default.
-16% as labeled training: 32
-remaining 64% as unlabeled training: 129
+10% as test: 20
+20% as validation: 40
+Out of training, 10-90 or 20-80 labeled-unlabeled split. We shall go with 20-80 as default.
+labeled training: 28
+unlabeled training: 113
 
 nnUNet_raw_data_base/nnUNet_raw_data/Task103_Liver
 --imagesTrL
-====32 images
+====28 images
 --labelsTrL
-====32 labels
+====28 labels
 --imagesTrUL
-====129 images
---imagesTs
+====113 images
+--imagesVal
 ====40 images
---labelsTs
+--labelsVal
 ====40 labels
+--imagesTs
+====20 images
+--labelsTs
+====20 labels
+
+python ssnnunet/SSnnUNet_convert_decathlon_task.py -i ~/Downloads/Raw_MSD/Task03_Liver
+
+Step 2: Experiment planning and preprocessing
+
+
+Thoughts:
+focus on LiTS. LiTS is very isotropic -> use 3D full resolution U-Net (highest dice score)
+In the interest of time, train 1 fold of only 1 network (full resolution U-Net) -> 1 instead of 20 networks trained
+during development:
+
+https://www.ruder.io/semi-supervised/
+
+Method 1: self-training. train on labeled data, add proxy labels with high confidence to new labeled data.
+Repeat until no more predicted labels are confident.
+
+Method 2: tri-training: use 3 networks (2d, 3d fullres, 3d cascade/lowres) to train on labeled data, vote on proxy labels
+provide each network with bootstrapped sample of the labeled data
+
+
+Preprocessing
+- Determine target spacing from all training data
+- Resample to target spacing
+- Obtain foreground mean and standard deviation from labeled training data
+- Extrapolate standard deviation (should be larger, higher n) and mean (should be the same) for all training data
+- Global normalization of all training data
 
 
 
-SSnnUNet_convert_decathlon_task -i /xxx/Task05_Prostate
+No postprocessing (no cross validation)

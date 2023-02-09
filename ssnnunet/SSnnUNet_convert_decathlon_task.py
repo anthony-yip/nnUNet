@@ -60,9 +60,9 @@ def main():
 
     crawl_and_remove_hidden_from_decathlon(args.i)
 
-    split_4d(args.i, args.r, args.p, args.output_task_id)
+    split_4d(args.i, args.p, args.output_task_id)
 
-    convert_supervised_to_semi_supervised("Task003_Liver")
+    convert_supervised_to_semi_supervised("Task003_Liver", args.r)
 
 
 if __name__ == "__main__":

@@ -19,18 +19,22 @@ from natsort import natsorted
 def ss_split_data(label_count_in, unlabel_count_in, ratio=0.2):
     # do some math
     total_count = label_count_in + unlabel_count_in
-    test_count_out = int(0.2 * total_count)
-    assert test_count_out < label_count_in, "Not enough labeled data to form test set"
+    test_count_out = int(0.1 * total_count)
+    val_count_out = int(0.2 * total_count)
+    test_plus_val = test_count_out + val_count_out
+    assert test_plus_val < label_count_in, "not enough labeled data to form validation and test set."
 
-    training_count = total_count - test_count_out
-    # ensures labeled data (in) can accommodate both test data and labeled training data (out)
-    label_count_out = min(int(ratio * training_count), label_count_in - test_count_out)
+    training_count = total_count - test_plus_val
+    # ensures labeled data (in) can accommodate both test data, validation data and labeled training data (out)
+    label_count_out = min(int(ratio * training_count), label_count_in - test_plus_val)
     unlabel_count_out = training_count - label_count_out
-    assert test_count_out + unlabel_count_out + label_count_out == total_count, "Error in SS_utils line 23, num mismatch"
-    return test_count_out, unlabel_count_out, label_count_out
+    assert test_count_out + val_count_out + unlabel_count_out + label_count_out == total_count, \
+        "Error in SS_utils line 23, num mismatch"
+    return test_count_out, val_count_out, unlabel_count_out, label_count_out
 
 
 def convert_supervised_to_semi_supervised(folder_to_convert, ratio=0.2):
+    # TO FUTURE DO: add functionality for multi-modality (label and image mismatch)
     # folder_to_convert is in the form of "Task003_Liver"
     while folder_to_convert.endswith("/"):
         folder_to_convert = folder_to_convert[:-1]
@@ -49,8 +53,10 @@ def convert_supervised_to_semi_supervised(folder_to_convert, ratio=0.2):
     maybe_mkdir_p(join(output_folder_name, "imagesTrL"))
     maybe_mkdir_p(join(output_folder_name, "imagesTrUL"))
     maybe_mkdir_p(join(output_folder_name, "imagesTs"))
+    maybe_mkdir_p(join(output_folder_name, "imagesVal"))
     maybe_mkdir_p(join(output_folder_name, "labelsTrL"))
     maybe_mkdir_p(join(output_folder_name, "labelsTs"))
+    maybe_mkdir_p(join(output_folder_name, "labelsVal"))
 
     # collate full file names for all input nii files
     input_Tr_name = join(input_folder_name, "imagesTr")
@@ -62,25 +68,29 @@ def convert_supervised_to_semi_supervised(folder_to_convert, ratio=0.2):
     nii_files_Tr = natsorted(nii_files_Tr)
     nii_files_Ts = natsorted(nii_files_Ts)
     labels_Tr = natsorted(labels_Tr)
-    print(nii_files_Tr[:10])
-    print(nii_files_Ts[:10])
-    print(labels_Tr[:10])
+    # print(nii_files_Tr[:10])
+    # print(nii_files_Ts[:10])
+    # print(labels_Tr[:10])
 
     assert len(labels_Tr) == len(nii_files_Tr), "mismatched labels"
 
     # do math and obtain the output split
-    test_count, unlabel_count, label_count = ss_split_data(len(nii_files_Tr), len(nii_files_Ts), ratio)
-    print(f"test count: {test_count}, unlabeled training count: {unlabel_count}, labeled training count: {label_count}")
+    test_count, val_count, unlabel_count, label_count = ss_split_data(len(nii_files_Tr), len(nii_files_Ts), ratio)
+    print(f"test count: {test_count}, validation count: {val_count}, unlabeled training count: {unlabel_count}, "
+          f"labeled training count: {label_count}")
+    test_plus_val = test_count + val_count
 
     # create list representations of output directories
     imagesTs = nii_files_Tr[:test_count]
     labelsTs = labels_Tr[:test_count]
-    imagesTrL = nii_files_Tr[test_count:test_count + label_count]
-    labelsTrL = labels_Tr[test_count:test_count + label_count]
-    imagesTrUL = nii_files_Tr[test_count + label_count:]
+    imagesVal = nii_files_Tr[test_count:test_plus_val]
+    labelsVal = labels_Tr[test_count:test_plus_val]
+    imagesTrL = nii_files_Tr[test_plus_val:test_plus_val + label_count]
+    labelsTrL = labels_Tr[test_plus_val:test_plus_val + label_count]
+    imagesTrUL = nii_files_Tr[test_plus_val + label_count:]
     remaining_count = unlabel_count - len(imagesTrUL)
-    imagesTrUL += nii_files_Ts
-    assert len(imagesTrUL) == unlabel_count
+    imagesTrUL += nii_files_Ts[:remaining_count]
+    assert len(imagesTrUL) == unlabel_count, "incorrect number of unlabeled images formed"
 
     for file in imagesTs:
         shutil.copy2(file, join(output_folder_name, "imagesTs"))
@@ -92,6 +102,11 @@ def convert_supervised_to_semi_supervised(folder_to_convert, ratio=0.2):
         shutil.copy2(file, join(output_folder_name, "labelsTrL"))
     for file in imagesTrUL:
         shutil.copy2(file, join(output_folder_name, "imagesTrUL"))
+    for file in imagesVal:
+        shutil.copy2(file, join(output_folder_name, "imagesVal"))
+    for file in labelsVal:
+        shutil.copy2(file, join(output_folder_name, "labelsVal"))
+    shutil.copy(join(input_folder_name, "dataset.json"), join(output_folder_name, "dataset.json"))
 
 #
 # def ss_split_4d(input_folder, ratio, num_processes=default_num_threads, overwrite_task_output_id=None):
