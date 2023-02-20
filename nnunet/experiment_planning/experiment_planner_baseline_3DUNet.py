@@ -407,6 +407,7 @@ class ExperimentPlanner(object):
         for c in self.list_of_cropped_npz_files:
             case_identifier = get_case_identifier_from_npz(c)
             properties = self.load_properties_of_cropped(case_identifier)
+            assert properties is not None, case_identifier
             properties['use_nonzero_mask_for_norm'] = use_nonzero_mask_for_norm
             self.save_properties_of_cropped(case_identifier, properties)
         use_nonzero_mask_for_normalization = use_nonzero_mask_for_norm

@@ -108,70 +108,50 @@ def convert_supervised_to_semi_supervised(folder_to_convert, ratio=0.2):
         shutil.copy2(file, join(output_folder_name, "labelsVal"))
     shutil.copy(join(input_folder_name, "dataset.json"), join(output_folder_name, "dataset.json"))
 
-#
-# def ss_split_4d(input_folder, ratio, num_processes=default_num_threads, overwrite_task_output_id=None):
-#     assert isdir(join(input_folder, "imagesTr")) and isdir(join(input_folder, "labelsTr")) and \
-#            isfile(join(input_folder, "dataset.json")), \
-#         "The input folder must be a valid Task folder from the Medical Segmentation Decathlon with at least the " \
-#         "imagesTr and labelsTr subfolders and the dataset.json file"
-#
-#     while input_folder.endswith("/"):
-#         input_folder = input_folder[:-1]
-#
-#     full_task_name = input_folder.split("/")[-1]
-#
-#     assert full_task_name.startswith("Task"), "The input folder must point to a folder that starts with TaskXX_"
-#
-#     first_underscore = full_task_name.find("_")
-#     assert first_underscore == 6, "Input folder start with TaskXX with XX being a 3-digit id: 00, 01, 02 etc"
-#
-#     input_task_id = int(full_task_name[4:6])  # change task like 05 to 105.
-#     if overwrite_task_output_id is None:
-#         overwrite_task_output_id = input_task_id
-#
-#     task_name = full_task_name[7:]
-#
-#     output_folder = join(nnUNet_raw_data, "Task%03.0d_" % overwrite_task_output_id + task_name)
-#
-#     if isdir(output_folder):
-#         shutil.rmtree(output_folder)
-#
-#     files = []
-#     output_dirs = []
-#
-#     maybe_mkdir_p(output_folder)
-#     #my code begins here
-#     curr_dir = join(input_folder, "imagesTr")
-#     nii_files_Tr = [join(curr_dir, i) for i in os.listdir(curr_dir) if i.endswith(".nii.gz")]
-#     curr_dir = join(input_folder, "imagesTs")
-#     nii_files_Ts = [join(curr_dir, i) for i in os.listdir(curr_dir) if i.endswith(".nii.gz")]
-#     curr_dir = join(input_folder, "labelsTr")
-#     labels_Tr = [join(curr_dir, i) for i in os.listdir(curr_dir) if i.endswith(".nii.gz")]
-#     nii_files_Tr.sort()
-#     nii_files_Ts.sort()
-#     labels_Tr.sort()
-#     assert len(labels_Tr) == len(nii_files_Tr), "mismatched labels"
-#     test_count, unlabel_count, label_count = ss_split_data(len(nii_files_Tr), len(nii_files_Ts), ratio)
-#     print(f"test count: {test_count}, unlabeled training count: {unlabel_count}, labeled training count: {label_count}")
-#     # gives the correct counts at this point (40 test, 129 unlabeled training, 32 labeled training)
-#     maybe_mkdir_p(join(output_folder, "labelsTrL"))
-#     maybe_mkdir_p(join(output_folder, "labelsTs"))
-#     for i in range(label_count):
-#         files.append(nii_files_Tr.pop())
-#         output_dirs.append(join(output_folder, "imagesTrL"))
-#         shutil.copy2(labels_Tr.pop(), join(output_folder, "labelsTrL"))
-#     for i in range(test_count):
-#         files.append(nii_files_Tr.pop())
-#         output_dirs.append(join(output_folder, "imagesTs"))
-#         shutil.copy2(labels_Tr.pop(), join(output_folder, "labelsTs"))
-#     for i in range(unlabel_count):
-#         if nii_files_Tr:
-#             files.append(nii_files_Tr.pop())
-#         else:
-#             files.append(nii_files_Ts.pop())
-#         output_dirs.append(join(output_folder, "imagesTrUL"))
-#     p = Pool(num_processes)
-#     p.starmap(split_4d_nifti, zip(files, output_dirs))
-#     p.close()
-#     p.join()
-#     shutil.copy(join(input_folder, "dataset.json"), output_folder)
+
+def create_lists_from_splitted_dataset(base_folder_splitted, folder_marker, label_marker=None):
+    # folder_marker such as "imagesTrL"
+    lists = []
+
+    json_file = join(base_folder_splitted, "dataset.json")
+    with open(json_file) as jsn:
+        d = json.load(jsn)
+    num_modalities = len(d['modality'].keys())
+    patient_list = [i[:-12] for i in os.listdir(join(base_folder_splitted, folder_marker)) if i.endswith("0000.nii.gz")]
+    print(f"detected {len(patient_list)} unique patient cases in {join(base_folder_splitted, folder_marker)}.")
+    for id in patient_list:
+        # id looks like "liver_60"
+        # delete this later
+
+        cur_pat = []
+        for mod in range(num_modalities):
+            # list of all the filenames
+            cur_pat.append(join(base_folder_splitted, folder_marker, id +
+                                "_%04.0d.nii.gz" % mod))
+        if label_marker is not None:
+            cur_pat.append(join(base_folder_splitted, label_marker, id + ".nii.gz"))
+        else:
+            cur_pat.append(None)
+        lists.append(cur_pat)
+    return lists
+
+
+def crop(task_string, override=False, num_threads=default_num_threads, ignore_unlabeled=False):
+    cropped_out_dir = join(nnUNet_cropped_data, task_string)
+    maybe_mkdir_p(cropped_out_dir)
+
+    if override and isdir(cropped_out_dir):
+        shutil.rmtree(cropped_out_dir)
+        maybe_mkdir_p(cropped_out_dir)
+
+    raw_dir = join(nnUNet_raw_data, task_string)
+    subfolders = [("imagesTrL", "labelsTrL"), ("imagesVal", "labelsVal"), ("imagesTrUL", None)]
+    if ignore_unlabeled:
+        subfolders = subfolders[:-1]
+
+    for images_subfolder, labels_subfolder in subfolders:
+        print("doing cropping for ", images_subfolder, " and ", labels_subfolder)
+        lists = create_lists_from_splitted_dataset(raw_dir, images_subfolder, labels_subfolder)
+        imgcrop = ImageCropper(num_threads, cropped_out_dir)
+        imgcrop.ss_run_cropping(lists, cropped_out_dir, images_subfolder, overwrite_existing=override)
+        shutil.copy(join(nnUNet_raw_data, task_string, "dataset.json"), cropped_out_dir)

@@ -1,6 +1,7 @@
 Step 1: Convert decathlon task
 location: nnunet/experiment_planning/experiment_planning_self_supervised/SSnnUNet_convert_decathlon_task.py
-Takes the raw downloaded data (in Downloads folder), converts it into the correct format (3D Nifti), wipes out then places it in
+Takes the raw downloaded data (in Downloads folder), converts it into the correct format (3D Nifti),
+divides it into labeled training, unlabeled training, validation and test sets, then places it in
 nnUNet_raw_data_base/nnUNet_raw_data only.
 
 Downloads/Raw_MSD/Task03_Liver
@@ -37,6 +38,22 @@ nnUNet_raw_data_base/nnUNet_raw_data/Task103_Liver
 python ssnnunet/SSnnUNet_convert_decathlon_task.py -i ~/Downloads/Raw_MSD/Task03_Liver
 
 Step 2: Experiment planning and preprocessing
+Crops the data to non-zero bounding box, creates a vertical stack with gt segmentations. For unlabeled data,
+the gt segmentation map is just -1 (zero) and 0 (non-zero)
+Analyzes the dataset using SS_DatasetAnalyzer, retrieving intensity properties from only labeled data and other properties
+from both labeled and unlabeled training data
+Does experiment planning with SS_ExperimentPlannerV21, dynamically adapting to GPU memory and using a min batch size of 4 instead of 2
+Does preprocessing on the data (resampling, normalization, searching for class locations)
+
+python ssnnunet/SSnnUNet_plan_and_preprocess -t 103 -c 6 -s 36 [-u]
+
+
+Step 3: Training
+
+python ssnnunet/SSnnUNet_train 3d_fullres SS_nnUNetTrainer -t 103
+
+        IMPORTANT: If you inherit from nnUNetTrainer and the init args change then you need to redefine self.init_args
+        in your init accordingly. Otherwise checkpoints won't load properly!
 
 
 Thoughts:
@@ -46,20 +63,8 @@ during development:
 
 https://www.ruder.io/semi-supervised/
 
-Method 1: self-training. train on labeled data, add proxy labels with high confidence to new labeled data.
-Repeat until no more predicted labels are confident.
+Method 1: self-training. train on labeled data, add proxy labels with high confidence to new labeled data every epoch. (test soft and hard labels)
 
 Method 2: tri-training: use 3 networks (2d, 3d fullres, 3d cascade/lowres) to train on labeled data, vote on proxy labels
 provide each network with bootstrapped sample of the labeled data
 
-
-Preprocessing
-- Determine target spacing from all training data
-- Resample to target spacing
-- Obtain foreground mean and standard deviation from labeled training data
-- Extrapolate standard deviation (should be larger, higher n) and mean (should be the same) for all training data
-- Global normalization of all training data
-
-
-
-No postprocessing (no cross validation)

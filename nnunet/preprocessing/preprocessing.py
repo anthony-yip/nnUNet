@@ -408,6 +408,50 @@ class GenericPreprocessor(object):
             p.join()
 
 
+class SS_GenericPreprocessor(GenericPreprocessor):
+    def run(self, target_spacings, input_folder_with_cropped_npz, output_folder, data_identifier, all_classes,
+            num_threads=default_num_threads, force_separate_z=None):
+        """
+
+        :param target_spacings: list of lists [[1.25, 1.25, 5]]
+        :param input_folder_with_cropped_npz: dim: c, x, y, z | npz_file['data'] np.savez_compressed(fname.npz, data=arr)
+        :param output_folder:
+        :param data_identifier:
+        :param all_classes
+        :param num_threads:
+        :param force_separate_z: None
+        :return:
+        """
+        print("Initializing to run semi-supervised preprocessing")
+        print("npz folder:", input_folder_with_cropped_npz)
+        print("output_folder:", output_folder)
+        list_of_cropped_npz_files = subfiles(input_folder_with_cropped_npz, True, None, ".npz", True)
+        maybe_mkdir_p(output_folder)
+        num_stages = len(target_spacings)
+        if not isinstance(num_threads, (list, tuple, np.ndarray)):
+            num_threads = [num_threads] * num_stages
+
+        assert len(num_threads) == num_stages
+
+        # we need to know which classes are present in this dataset so that we can precompute where these classes are
+        # located. This is needed for oversampling foreground
+        # all_classes = load_pickle(join(input_folder_with_cropped_npz, 'dataset_properties.pkl'))['all_classes']
+
+        for i in range(num_stages):
+            all_args = []
+            output_folder_stage = os.path.join(output_folder, data_identifier + "_stage%d" % i)
+            maybe_mkdir_p(output_folder_stage)
+            spacing = target_spacings[i]
+            for j, case in enumerate(list_of_cropped_npz_files):
+                case_identifier = get_case_identifier_from_npz(case)
+                args = spacing, case_identifier, output_folder_stage, input_folder_with_cropped_npz, force_separate_z, all_classes
+                all_args.append(args)
+            p = Pool(num_threads[i])
+            p.starmap(self._run_internal, all_args)
+            p.close()
+            p.join()
+
+
 class GenericPreprocessor_linearResampling(GenericPreprocessor):
     def __init__(self, normalization_scheme_per_modality, use_nonzero_mask, transpose_forward: (tuple, list),
                  intensityproperties=None):
