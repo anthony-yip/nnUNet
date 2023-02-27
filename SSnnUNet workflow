@@ -64,6 +64,12 @@ during development:
 https://www.ruder.io/semi-supervised/
 
 Method 1: self-training. train on labeled data, add proxy labels with high confidence to new labeled data every epoch. (test soft and hard labels)
+training data loader should have labeled_data and pseudo_labeled_data
+recompute training data loader at the end of every epoch
+training data loader should have a custom generate_train_batch method
+reinstantiate augmenter each epoch?
+
+
 
 Method 2: tri-training: use 3 networks (2d, 3d fullres, 3d cascade/lowres) to train on labeled data, vote on proxy labels
 provide each network with bootstrapped sample of the labeled data
