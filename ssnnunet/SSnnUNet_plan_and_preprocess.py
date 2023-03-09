@@ -13,25 +13,53 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", help="Task id for task you wish to run planning and preprocessing for. Task must have"
                                    " a corresponding Task_XXX folder in nnUNet_raw_data")
-    parser.add_argument("-c", type=int, default=6, help="Number of CPU cores you would like to use for preprocessing.")
-    parser.add_argument("-pl", type=str, default="SS_ExperimentPlanner3D_v21", help="Name of the Experiment Planner class you would like to use.")
-    parser.add_argument("-s", type=int, default=36, help="Amount of GPU memory")
-    parser.add_argument("-u", action='store_true', help="Set this flag to ignore unlabeled data")
+    parser.add_argument("-cores", type=int, default=6, help="Number of CPU logical cores you would like to use for preprocessing.")
+    parser.add_argument("-pl3d", type=str, default="SS_ExperimentPlanner3D_v21",
+                        help="Name of the ExperimentPlanner class for the full resolution and low resolution 3D U-Net. "
+                             "Default is SS_ExperimentPlanner3D_v21. Can be 'None', in which case these "
+                             "U-Nets will not be configured")
+    parser.add_argument("-pl2d", type=str, default="SS_ExperimentPlanner2D_v21",
+                        help="Name of the ExperimentPlanner class for the 2D U-Net. Default is SS_ExperimentPlanner2D_v21. "
+                             "Can be 'None', in which case this U-Net will not be configured")
+    parser.add_argument("-mem", type=int, default=36, help="Amount of GPU memory")
+    parser.add_argument("-ignore_unlabeled", action='store_true', help="Set this flag to ignore unlabeled data")
+    parser.add_argument("-tri", action='store_true', help='Set this flag to plan for 3 different networks')
     args = parser.parse_args()
     task_id = int(args.t)
     task_name = convert_id_to_task_name(task_id)
-    planner_name = args.pl
-    cores = args.c
-    vram = args.s
-    ignore_unlabeled = args.u
+    planner_name_3d = args.pl3d
+    planner_name_2d = args.pl2d
+    cores = args.cores
+    vram = args.mem
+    ignore_unlabeled = args.ignore_unlabeled
+    tri_train = args.tri
 
+    if tri_train:
+        assert planner_name_3d != "None" and planner_name_2d != "None", "tri-training requires both 2d and 3d."
+        assert not ignore_unlabeled, "tri-training requires unlabeled data."
+
+    # look for experiment planners
+    if planner_name_3d == "None":
+        planner_name_3d = None
+    if planner_name_2d == "None":
+        planner_name_2d = None
     search_in = join(nnunet.__path__[0], "experiment_planning")
-    planner_3d = recursive_find_python_class([search_in], planner_name, current_module="nnunet.experiment_planning")
-    if planner_3d is None:
-        raise RuntimeError("Could not find the Planner class %s. Make sure it is located somewhere in "
-                           "nnunet.experiment_planning" % planner_name)
+    if planner_name_3d is not None:
+        planner_3d = recursive_find_python_class([search_in], planner_name_3d, current_module="nnunet.experiment_planning")
+        if planner_3d is None:
+            raise RuntimeError("Could not find the Planner class %s. Make sure it is located somewhere in "
+                               "nnunet.experiment_planning" % planner_name_3d)
+    else:
+        planner_3d = None
+    if planner_name_2d is not None:
+        planner_2d = recursive_find_python_class([search_in], planner_name_2d, current_module="nnunet.experiment_planning")
+        if planner_2d is None:
+            raise RuntimeError("Could not find the Planner class %s. Make sure it is located somewhere in "
+                               "nnunet.experiment_planning" % planner_name_2d)
+    else:
+        planner_2d = None
 
-    #do planning
+    # do planning
     print("\n\n\n", task_name)
     cropped_out_dir = os.path.join(nnUNet_cropped_data, task_name)
     preprocessing_output_dir_this_task = os.path.join(preprocessing_output_dir, task_name)
@@ -41,7 +69,7 @@ def main():
     modalities = list(dataset_json["modality"].values())
     collect_intensityproperties = True if (("CT" in modalities) or ("ct" in modalities)) else False
 
-    #analyze dataset with SS_DatasetAnalyzer
+    # analyze dataset with SS_DatasetAnalyzer
     print("analyzing dataset, creating dataset fingerprint")
     # this class creates the fingerprint
     dataset_analyzer = SS_DatasetAnalyzer(cropped_out_dir, overwrite=True,
@@ -59,11 +87,19 @@ def main():
 
     print("number of threads: ", cores, "\n")
     if planner_3d is not None:
-        exp_planner = planner_3d(cropped_out_dir, preprocessing_output_dir_this_task, vram, ignore_unlabeled=ignore_unlabeled)
+        exp_planner = planner_3d(cropped_out_dir, preprocessing_output_dir_this_task, vram, tri_train,
+                                 ignore_unlabeled=ignore_unlabeled)
         print("planning experiment for 3D:")
         exp_planner.plan_experiment()
 
         print("\nrunning preprocessing for 3D:")
+        exp_planner.run_preprocessing((cores, cores))
+    if planner_2d is not None and tri_train:
+        exp_planner = planner_2d(cropped_out_dir, preprocessing_output_dir_this_task, vram, ignore_unlabeled=ignore_unlabeled)
+        print("\nplanning experiment for 2D:")
+        exp_planner.plan_experiment()
+
+        print("\nrunning preprocessing for 2D:")
         exp_planner.run_preprocessing((cores, cores))
 
 

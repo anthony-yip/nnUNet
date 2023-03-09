@@ -40,20 +40,66 @@ python ssnnunet/SSnnUNet_convert_decathlon_task.py -i ~/Downloads/Raw_MSD/Task03
 Step 2: Experiment planning and preprocessing
 Crops the data to non-zero bounding box, creates a vertical stack with gt segmentations. For unlabeled data,
 the gt segmentation map is just -1 (zero) and 0 (non-zero)
+
+python ssnnunet/SSnnUNet_run_cropping -t 103 -c 6[ -u]
+
++++NOTE: This is where the 3 training frameworks diverge.
+
+
 Analyzes the dataset using SS_DatasetAnalyzer, retrieving intensity properties from only labeled data and other properties
 from both labeled and unlabeled training data
 Does experiment planning with SS_ExperimentPlannerV21, dynamically adapting to GPU memory and using a min batch size of 4 instead of 2
 Does preprocessing on the data (resampling, normalization, searching for class locations)
+Optional flag to completely ignore unlabeled data
 
-python ssnnunet/SSnnUNet_plan_and_preprocess -t 103 -c 6 -s 36 [-u]
+python ssnnunet/SSnnUNet_plan_and_preprocess -t 103 -cores 6 -mem 36 [-ignore_unlabeled] [-tri]
 
 
 Step 3: Training
 
+Method 0: Fully supervised training
+Trains on labeled data and validates on validation data. No unlabeled data used.
+
+python ssnnunet/SSnnUNet_train_labeled_only 3d_fullres SS_nnUNetTrainer_labeled_only -t 102
+
+
+Method 1: Self-training
+No folds, just train on labeled training data and validate on validation data
+After 1000 epochs, saves a checkpoint and starts semi-supervised training
+Each epoch, predicts labels for unlabeled data (100 patches), adding those with high confidence (>0.8) to pseudo-labeled data
+Pseudo-labeled data stored in output_folder/pseudo_labeled_data (both npz and pkl file)
+Uses hard labels
+Recomputes training data loader and augmenter every epoch
+Trains model with both pseudo-labeled and labeled data (removed spatial data augmentation due to limited size of pseudo-labeled data)
+Validates on validation set and saves final checkpoint.
+
 python ssnnunet/SSnnUNet_train 3d_fullres SS_nnUNetTrainer -t 103
 
-        IMPORTANT: If you inherit from nnUNetTrainer and the init args change then you need to redefine self.init_args
-        in your init accordingly. Otherwise checkpoints won't load properly!
+
+Method 2: tri-training: use 3 networks (2d, 3d fullres, 3d lowres) to train on labeled data, vote on proxy labels
+provide each network with bootstrapped sample of the labeled data
+
+During experiment planning and preprocessing. Allocate 36GB to each model. (Hopefully) use 3 A100s to train the 3 models.
+Training:
+Train the 3 networks on the labeled training data for 1000 epochs first. Do a validation with validation data. Save checkpoint for each model.
+Every 100 epochs:
+Generate predictions from each network on unlabeled training data (full, using sliding window, instead of just the patch size)
+--(all the unlabeled data? that's 100 predictions x3) yikes. Save as either segmentation niftis or softmax npzs
+Script to compute foreground Dice score between 3 sets of predictions A, B and C.
+If A and B have the highest Dice, ensemble A and B and add it to C's training set.
+Repeat 10 times.
+
+The 3 GPUs do not need to communicate. The only communication is done by moving files around.
+Each model only needs to know where to find pseudo labeled data.
+
+Optional: consider weighting based on validation accuracy of each network.
+
+Implementation:
+
+
+
+Only difference in properties files between labeled and unlabeled:
+- no seg_file and no class_locations
 
 
 Thoughts:
@@ -62,15 +108,3 @@ In the interest of time, train 1 fold of only 1 network (full resolution U-Net) 
 during development:
 
 https://www.ruder.io/semi-supervised/
-
-Method 1: self-training. train on labeled data, add proxy labels with high confidence to new labeled data every epoch. (test soft and hard labels)
-training data loader should have labeled_data and pseudo_labeled_data
-recompute training data loader at the end of every epoch
-training data loader should have a custom generate_train_batch method
-reinstantiate augmenter each epoch?
-
-
-
-Method 2: tri-training: use 3 networks (2d, 3d fullres, 3d cascade/lowres) to train on labeled data, vote on proxy labels
-provide each network with bootstrapped sample of the labeled data
-

@@ -409,7 +409,7 @@ class GenericPreprocessor(object):
 
 
 class SS_GenericPreprocessor(GenericPreprocessor):
-    def run(self, target_spacings, input_folder_with_cropped_npz, output_folder, data_identifier, all_classes,
+    def run(self, target_spacings, input_folder_with_cropped_npz, output_folder, data_identifier,
             num_threads=default_num_threads, force_separate_z=None):
         """
 
@@ -435,7 +435,8 @@ class SS_GenericPreprocessor(GenericPreprocessor):
 
         # we need to know which classes are present in this dataset so that we can precompute where these classes are
         # located. This is needed for oversampling foreground
-        # all_classes = load_pickle(join(input_folder_with_cropped_npz, 'dataset_properties.pkl'))['all_classes']
+        main_folder = os.path.dirname(input_folder_with_cropped_npz)
+        all_classes = load_pickle(join(main_folder, 'dataset_properties.pkl'))['all_classes']
 
         for i in range(num_stages):
             all_args = []
@@ -744,6 +745,36 @@ class PreprocessorFor2D(GenericPreprocessor):
             print("normalization done")
         return data, seg, properties
 
+
+class SS_PreprocessorFor2D(PreprocessorFor2D):
+    def run(self, target_spacings, input_folder_with_cropped_npz, output_folder, data_identifier,
+            num_threads=default_num_threads, force_separate_z=None):
+        print("Initializing to run semi-supervised preprocessing")
+        print("npz folder:", input_folder_with_cropped_npz)
+        print("output_folder:", output_folder)
+        list_of_cropped_npz_files = subfiles(input_folder_with_cropped_npz, True, None, ".npz", True)
+        assert len(list_of_cropped_npz_files) != 0, "set list of files first"
+        maybe_mkdir_p(output_folder)
+        all_args = []
+        num_stages = len(target_spacings)
+
+        # we need to know which classes are present in this dataset so that we can precompute where these classes are
+        # located. This is needed for oversampling foreground
+        main_folder = os.path.dirname(input_folder_with_cropped_npz)
+        all_classes = load_pickle(join(main_folder, 'dataset_properties.pkl'))['all_classes']
+
+        for i in range(num_stages):
+            output_folder_stage = os.path.join(output_folder, data_identifier + "_stage%d" % i)
+            maybe_mkdir_p(output_folder_stage)
+            spacing = target_spacings[i]
+            for j, case in enumerate(list_of_cropped_npz_files):
+                case_identifier = get_case_identifier_from_npz(case)
+                args = spacing, case_identifier, output_folder_stage, input_folder_with_cropped_npz, force_separate_z, all_classes
+                all_args.append(args)
+        p = Pool(num_threads)
+        p.starmap(self._run_internal, all_args)
+        p.close()
+        p.join()
 
 class PreprocessorFor2D_edgeLength512(PreprocessorFor2D):
     target_edge_size = 512

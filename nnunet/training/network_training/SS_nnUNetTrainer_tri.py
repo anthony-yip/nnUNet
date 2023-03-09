@@ -15,13 +15,14 @@ import shutil
 from _warnings import warn
 from collections import OrderedDict
 from typing import Tuple
-from time import time, sleep
+from time import time
 from tqdm import trange
+
 
 import numpy as np
 import torch
 from nnunet.training.data_augmentation.data_augmentation_moreDA import get_moreDA_augmentation_train, \
-    get_moreDA_augmentation_val, get_moreDA_augmentation_train_pseudo
+    get_moreDA_augmentation_val
 from nnunet.training.loss_functions.deep_supervision import MultipleOutputLoss2
 from nnunet.utilities.to_torch import maybe_to_torch, to_cuda
 from nnunet.network_architecture.generic_UNet import Generic_UNet
@@ -37,6 +38,7 @@ from torch import nn
 from torch.cuda.amp import autocast
 from nnunet.training.learning_rate.poly_lr import poly_lr
 from batchgenerators.utilities.file_and_folder_operations import *
+from nnunet.preprocessing.preprocessing import get_lowres_axis, get_do_separate_z, resample_data_or_seg
 
 import sys
 import matplotlib
@@ -66,7 +68,7 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
         self.dataset_trul = None
         self.datasets = OrderedDict()
         self.supervised_mode = None
-        # self.confidence_threshold = 0.8
+        self.save_every = 100
 
     def initialize(self, training=True, force_load_plans=False):
         """
@@ -579,6 +581,8 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
             self.epoch += 1
             self.print_to_log_file("This epoch took %f s\n" % (epoch_end_time - epoch_start_time))
 
+        self.predict_unlabeled()
+
         # set epoch back to 0 for the next round of training, then update lr accordingly
         # re-initialize self.optimizer to reset velocity
         self.epoch = 0
@@ -599,12 +603,15 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
 
         self.epoch = 0
 
-    def _run_training_internal_semi(self):
+    def _run_training_internal_semi(self, epoch_count=100):
         print("beginning/continuing semi-supervised training")
         self.supervised_mode = "semi"
         if not torch.cuda.is_available():
             self.print_to_log_file(
                 "WARNING!!! You are attempting to run training on a CPU (torch.cuda.is_available() is False). This can be VERY slow!")
+
+        count = 0
+        self.recompute_generators()
 
         _ = self.tr_gen.next()
         _ = self.val_gen.next()
@@ -625,7 +632,7 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
         if not self.was_initialized:
             self.initialize(True)
 
-        while self.epoch < self.max_num_epochs:
+        while self.epoch < self.max_num_epochs and count < epoch_count:
             self.print_to_log_file("\nepoch: ", self.epoch)
             epoch_start_time = time()
             train_losses_epoch = []
@@ -670,85 +677,23 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
                 # allows for early stopping
                 break
 
-            self.predict_and_store_pseudo_labels()
-            self.recompute_generators()
-
-            recompute_end_time = time()
-
             self.epoch += 1
+            count += 1
             self.print_to_log_file("This epoch took %f s\n" % (epoch_end_time - epoch_start_time))
-            self.print_to_log_file("Recomputing generators took %f s\n" % (recompute_end_time - epoch_end_time))
 
-        self.epoch -= 1  # if we don't do this we can get a problem with loading model_final_checkpoint.
+        assert self.epoch < 1001, "this should not happen"
+        self.predict_unlabeled()
 
-        if self.save_final_checkpoint:
-            self.save_checkpoint(join(self.output_folder, "model_final_checkpoint.model"))
-        # now we can delete latest as it will be identical with final
-        if isfile(join(self.output_folder, "model_latest_semi.model")):
-            os.remove(join(self.output_folder, "model_latest_semi.model"))
-        if isfile(join(self.output_folder, "model_latest_semi.model.pkl")):
-            os.remove(join(self.output_folder, "model_latest_semi.model.pkl"))
+        if self.epoch == 1000:
+            self.epoch -= 1  # if we don't do this we can get a problem with loading model_final_checkpoint.
 
-    def predict_and_store_pseudo_labels(self):
-        # we only want the full resolution output
-        ds = self.network.do_ds
-        self.network.do_ds = False
-
-        pseudo_folder = join(self.output_folder, "pseudo_labeled_data")
-        if isdir(pseudo_folder):
-            shutil.rmtree(pseudo_folder)
-        maybe_mkdir_p(pseudo_folder)
-
-        with torch.no_grad():
-            self.network.eval()
-            self.optimizer.zero_grad()
-
-            confident_count = 0
-            sample_count = int(len(self.dataset_trul) / self.batch_size)
-            for i in range(sample_count):
-                output, data, data_dict = self.get_softmax_for_unlabeled()
-                # (4, C, D, L, W)
-                assert len(output.shape) == 5
-                # ndarray of length self.batch_size
-                keys = data_dict["keys"]
-                values, indices = output.max(1, keepdim=True)
-                confidence = values.mean((1, 2, 3, 4))
-                for j, score in enumerate(confidence):
-                    if score > self.confidence_threshold:
-                        new_data = np.vstack(data[j], indices[j])
-                        assert new_data.dtype == np.float32
-                        fname = join(pseudo_folder, keys[j] + ".npz")
-                        np.savez_compressed(fname, data=new_data)
-                        properties_fname = join(self.dataset_directory, "TrUL", self.plans['data_identifier'] +
-                                                "_stage%d" % self.stage, keys[j] + ".pkl")
-                        shutil.copy(properties_fname, pseudo_folder)
-                        confident_count += 1
-            self.print_to_log_file(f"found {confident_count} confident pseudo labels out "
-                                   f"of {sample_count * self.batch_size} unlabeled data")
-
-        self.network.do_ds = ds
-
-        return
-
-    def get_softmax_for_unlabeled(self):
-        data_dict = next(self.trul_gen)
-        data = data_dict['data']
-        data = maybe_to_torch(data)
-        if torch.cuda.is_available():
-            data = to_cuda(data)
-        # LiTS: should be a minibatch of 4 unlabeled training examples with 1 colour channel: (4, 1, D, L, W)
-
-        if self.fp16:
-            with autocast():
-                output = self.network(data)
-                del data
-        else:
-            output = self.network(data)
-            del data
-
-        assert isinstance(output, torch.Tensor)
-
-        return output.detach().cpu().numpy(), data, data_dict
+            if self.save_final_checkpoint:
+                self.save_checkpoint(join(self.output_folder, "model_final_checkpoint.model"))
+            # now we can delete latest as it will be identical with final
+            if isfile(join(self.output_folder, "model_latest_semi.model")):
+                os.remove(join(self.output_folder, "model_latest_semi.model"))
+            if isfile(join(self.output_folder, "model_latest_semi.model.pkl")):
+                os.remove(join(self.output_folder, "model_latest_semi.model.pkl"))
 
     def recompute_generators(self):
         folder_with_pseudo_labeled_data = join(self.output_folder, "pseudo_labeled_data")
@@ -759,15 +704,106 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
             print("done")
         self.print_to_log_file("recomputing generators...")
         assert dataset_pseudo is not None
-        self.dl_tr = SS_DataLoader3D(self.dataset_tr, self.patch_size, self.patch_size, self.batch_size,
+        self.dl_tr = SS_DataLoader3D(self.dataset_tr, self.basic_generator_patch_size, self.patch_size, self.batch_size,
                                      False, oversample_foreground_percent=self.oversample_foreground_percent,
                                      pad_mode="constant", pad_sides=self.pad_all_sides, memmap_mode='r',
                                      pseudo_data=dataset_pseudo)
 
-        self.tr_gen = get_moreDA_augmentation_train_pseudo(
+        self.tr_gen = get_moreDA_augmentation_train(
             self.dl_tr, self.data_aug_params,
             deep_supervision_scales=self.deep_supervision_scales,
             pin_memory=self.pin_memory,
             use_nondetMultiThreadedAugmenter=False
         )
         self.print_to_log_file("recomputing generators done.")
+
+    def unresample_and_save_softmax(self, segmentation_softmax: np.ndarray, out_fname: str,
+                                             properties_dict: dict):
+        # resample to shape after cropping
+        current_shape = segmentation_softmax.shape
+        shape_original_after_cropping = properties_dict.get('size_after_cropping')
+
+        if np.any([i != j for i, j in zip(np.array(current_shape[1:]), np.array(shape_original_after_cropping))]):
+            if get_do_separate_z(properties_dict.get('original_spacing')):
+                do_separate_z = True
+                lowres_axis = get_lowres_axis(properties_dict.get('original_spacing'))
+            elif get_do_separate_z(properties_dict.get('spacing_after_resampling')):
+                do_separate_z = True
+                lowres_axis = get_lowres_axis(properties_dict.get('spacing_after_resampling'))
+            else:
+                do_separate_z = False
+                lowres_axis = None
+
+            if lowres_axis is not None and len(lowres_axis) != 1:
+                # this happens for spacings like (0.24, 1.25, 1.25) for example. In that case we do not want to resample
+                # separately in the out of plane axis
+                do_separate_z = False
+
+            seg_old_spacing = resample_data_or_seg(segmentation_softmax, shape_original_after_cropping, is_seg=False,
+                                                   axis=lowres_axis, order=1, do_separate_z=do_separate_z,
+                                                   order_z=0)
+        else:
+            seg_old_spacing = segmentation_softmax
+
+        # convert to one-hot encoding
+        seg_old_spacing = seg_old_spacing > 0.5
+        np.savez_compressed(out_fname, one_hot=seg_old_spacing)
+
+    def predict_unlabeled(self, use_sliding_window: bool = True, step_size: float = 0.5, use_gaussian: bool = True,
+                          all_in_gpu: bool = False):
+        """
+        We need to wrap this because we need to enforce self.network.do_ds = False for prediction
+        Runs predictions on all unlabeled data, creating a one-hot encoding for each and saving it as a
+        {case_identifier}.npz file in output folder/predicted_unlabeled_data
+        """
+        ds = self.network.do_ds
+        current_mode = self.network.training
+        self.network.do_ds = False
+        self.network.eval()
+
+        assert self.was_initialized, "must initialize, ideally with checkpoint (or train first)"
+        self.dataset_trul = self.datasets["TrUL"]
+
+        # predictions as they come from the network go here
+        output_folder = join(self.output_folder, "predicted_unlabeled_data")
+        shutil.rmtree(output_folder)
+        maybe_mkdir_p(output_folder)
+        # this is for debug purposes
+        my_input_args = {'use_sliding_window': use_sliding_window,
+                         'step_size': step_size,
+                         'use_gaussian': use_gaussian,
+                         'all_in_gpu': all_in_gpu,
+                         }
+        save_json(my_input_args, join(output_folder, "predict_args.json"))
+
+        do_mirroring = False
+        mirror_axes = None
+        self.print_to_log_file("running predictions for unlabeled data...")
+        predict_start_time = time()
+        for k in self.dataset_trul.keys():
+            data = np.load(self.dataset_trul[k]['data_file'])['data'][:-1]
+            if 'properties' in self.dataset_trul[k]:
+                properties = self.dataset_trul[k]['properties']
+            else:
+                properties = load_pickle(self.dataset[k]['properties_file'])
+            # this is in the cpu
+            # this function returns a tuple (segmentation, softmax) with shapes (x, y, z) and (c, x, y, z)
+            softmax_pred = self.predict_preprocessed_data_return_seg_and_softmax(data,
+                                                                                 do_mirroring=do_mirroring,
+                                                                                 mirror_axes=mirror_axes,
+                                                                                 use_sliding_window=use_sliding_window,
+                                                                                 step_size=step_size,
+                                                                                 use_gaussian=use_gaussian,
+                                                                                 all_in_gpu=all_in_gpu,
+                                                                                 mixed_precision=self.fp16)[1]
+            softmax_pred = softmax_pred.transpose([0] + [i + 1 for i in self.transpose_backward])
+            # resample, clip to one-hot, save
+            softmax_fname = join(output_folder, k + ".npz")
+            self.unresample_and_save_softmax(softmax_pred, softmax_fname, properties)
+        predict_end_time = time()
+        self.print_to_log_file("running predictions done.")
+        self.print_to_log_file(f"predictions saved in {output_folder}.")
+        self.print_to_log_file(f"predictions took {predict_end_time - predict_start_time} s")
+        self.network.train(current_mode)
+        self.network.do_ds = ds
+        return
