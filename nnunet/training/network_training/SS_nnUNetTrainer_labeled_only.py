@@ -37,7 +37,7 @@ from nnunet.training.learning_rate.poly_lr import poly_lr
 from batchgenerators.utilities.file_and_folder_operations import *
 
 
-class nnUNetTrainerV2(nnUNetTrainer):
+class SS_nnUNetTrainer_labeled_only(nnUNetTrainer):
     """
     Info for Fabian: same as internal nnUNetTrainerV2_2
     """
@@ -170,11 +170,10 @@ class nnUNetTrainerV2(nnUNetTrainer):
             folder_with_preprocessed_data = join(self.dataset_directory, subfolder, self.plans['data_identifier'] +
                                                  "_stage%d" % self.stage)
             self.datasets[subfolder] = load_dataset(folder_with_preprocessed_data)
-            print(self.datasets)
             if self.unpack_data:
-                print("unpacking subfolder: ", subfolder)
+                self.print_to_log_file("unpacking subfolder: ", subfolder)
                 unpack_dataset(folder_with_preprocessed_data)
-                print("done")
+                self.print_to_log_file("done")
         self.dataset_tr = self.datasets["imagesTrL"]
         self.dataset_val = self.datasets["imagesVal"]
         assert isinstance(self.dataset_tr, OrderedDict)

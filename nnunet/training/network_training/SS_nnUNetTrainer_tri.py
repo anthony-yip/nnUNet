@@ -53,17 +53,17 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
     """
 
     def __init__(self, plans_file, output_folder=None, dataset_directory=None, batch_dice=True, stage=None,
-                 unpack_data=True, deterministic=True, fp16=False):
+                 unpack_data=True, deterministic=True, fp16=False, learning_rate=1e-2):
         super().__init__(plans_file, 'all', output_folder, dataset_directory, batch_dice, stage, unpack_data,
                          deterministic, fp16)
         self.max_num_epochs = 1000
-        self.initial_lr = 1e-2
+        self.initial_lr = learning_rate
         self.deep_supervision_scales = None
         self.ds_loss_weights = None
         self.pin_memory = True
         # mine
         self.init_args = (plans_file, output_folder, dataset_directory, batch_dice, stage, unpack_data,
-                          deterministic, fp16)
+                          deterministic, fp16, learning_rate)
         self.subfolders = ["imagesTrL", "imagesTrUL", "imagesVal"]
         self.dataset_trul = None
         self.datasets = OrderedDict()
@@ -123,8 +123,6 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
                 self.print_to_log_file("TRAINING KEYS:\n %s" % (str(self.dataset_tr.keys())),
                                        also_print_to_console=False)
                 self.print_to_log_file("VALIDATION KEYS:\n %s" % (str(self.dataset_val.keys())),
-                                       also_print_to_console=False)
-                self.print_to_log_file("UNLABELED KEYS:\n %s" % (str(self.dataset_trul.keys())),
                                        also_print_to_console=False)
             else:
                 pass
@@ -188,7 +186,6 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
                                                  "_stage%d" % self.stage)
             # load_dataset just adds the paths of the npz files into the self.datasets dictionary
             self.datasets[subfolder] = load_dataset(folder_with_preprocessed_data)
-            print(self.datasets)
             if self.unpack_data:
                 print("unpacking subfolder: ", subfolder)
                 unpack_dataset(folder_with_preprocessed_data)
@@ -424,7 +421,7 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
         if self.save_intermediate_checkpoints and (self.epoch % self.save_every == (self.save_every - 1)):
             self.print_to_log_file("saving scheduled checkpoint file...")
             if not self.save_latest_only:
-                self.save_checkpoint(join(self.output_folder, "model_ep_%03.0d.model" % (self.epoch + 1)))
+                self.save_checkpoint(join(self.output_folder, f"model_ep_{self.epoch + 1}_{self.supervised_mode}.model"))
             self.save_checkpoint(join(self.output_folder, f"model_latest_{self.supervised_mode}.model"))
             self.print_to_log_file("done")
 
@@ -433,6 +430,11 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
         if isfile(join(self.output_folder, f"model_latest_{supervised}.model")):
             return self.load_checkpoint(join(self.output_folder, f"model_latest_{supervised}.model"), train=train)
         raise RuntimeError("No checkpoint found")
+
+    def load_epoch_checkpoint(self, epoch, train=True):
+        if isfile(join(self.output_folder, f"model_ep_{epoch}_semi.model")):
+            return self.load_checkpoint(join(self.output_folder, f"model_ep_{epoch}_semi.model"), train=train)
+        raise RuntimeError("No epoch checkpoint found")
 
     def load_final_checkpoint(self, train=False):
         filename = join(self.output_folder, "model_final_checkpoint.model")
@@ -581,7 +583,8 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
             self.epoch += 1
             self.print_to_log_file("This epoch took %f s\n" % (epoch_end_time - epoch_start_time))
 
-        self.predict_unlabeled()
+        output_folder = self.predict_unlabeled()
+        shutil.copytree(output_folder, join(self.output_folder, "first_predictions"))
 
         # set epoch back to 0 for the next round of training, then update lr accordingly
         # re-initialize self.optimizer to reset velocity
@@ -595,6 +598,7 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
 
         if self.save_final_checkpoint:
             self.save_checkpoint(join(self.output_folder, "model_FS_checkpoint.model"))
+            self.save_checkpoint(join(self.output_folder, "model_ep_0_semi.model"))
         # now we can delete latest as it will be identical with final
         if isfile(join(self.output_folder, "model_latest_full.model")):
             os.remove(join(self.output_folder, "model_latest_full.model"))
@@ -697,20 +701,31 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
 
     def recompute_generators(self):
         folder_with_pseudo_labeled_data = join(self.output_folder, "pseudo_labeled_data")
+        if len(os.listdir(folder_with_pseudo_labeled_data)) == 0:
+            self.print_to_log_file("no psuedo labels available, not recomputing generator.")
+            return
         dataset_pseudo = load_dataset(folder_with_pseudo_labeled_data)
+        self.print_to_log_file(f"found {len(dataset_pseudo)}, pseudo labels.")
         if self.unpack_data:
-            print("unpacking pseudo labeled data")
+            self.print_to_log_file("unpacking pseudo labeled data")
             unpack_dataset(folder_with_pseudo_labeled_data)
-            print("done")
+            self.print_to_log_file("done")
         self.print_to_log_file("recomputing generators...")
         assert dataset_pseudo is not None
-        self.dl_tr = SS_DataLoader3D(self.dataset_tr, self.basic_generator_patch_size, self.patch_size, self.batch_size,
-                                     False, oversample_foreground_percent=self.oversample_foreground_percent,
-                                     pad_mode="constant", pad_sides=self.pad_all_sides, memmap_mode='r',
-                                     pseudo_data=dataset_pseudo)
-
+        if self.threeD:
+            self.dl_tr = SS_DataLoader3D(self.dataset_tr, self.basic_generator_patch_size, self.patch_size,
+                                         self.batch_size, False, 
+                                         oversample_foreground_percent=self.oversample_foreground_percent,
+                                         pad_mode="constant", pad_sides=self.pad_all_sides, memmap_mode='r',
+                                         pseudo_data=dataset_pseudo)
+        else:
+            self.dl_tr = SS_DataLoader2D(self.dataset_tr, self.basic_generator_patch_size, self.patch_size,
+                                         self.batch_size,
+                                         oversample_foreground_percent=self.oversample_foreground_percent,
+                                         pad_mode="constant", pad_sides=self.pad_all_sides, memmap_mode='r', 
+                                         pseudo_data=dataset_pseudo)
         self.tr_gen = get_moreDA_augmentation_train(
-            self.dl_tr, self.data_aug_params,
+            self.dl_tr, self.data_aug_params['patch_size_for_spatialtransform'], self.data_aug_params,
             deep_supervision_scales=self.deep_supervision_scales,
             pin_memory=self.pin_memory,
             use_nondetMultiThreadedAugmenter=False
@@ -762,12 +777,18 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
         self.network.eval()
 
         assert self.was_initialized, "must initialize, ideally with checkpoint (or train first)"
-        self.dataset_trul = self.datasets["TrUL"]
+        self.dataset_trul = self.datasets["imagesTrUL"]
 
         # predictions as they come from the network go here
         output_folder = join(self.output_folder, "predicted_unlabeled_data")
-        shutil.rmtree(output_folder)
+        pseudo_folder = join(self.output_folder, "pseudo_labeled_data")
+        if isdir(output_folder):
+            shutil.rmtree(output_folder)
+        if isdir(pseudo_folder):
+            shutil.rmtree(pseudo_folder)
         maybe_mkdir_p(output_folder)
+        maybe_mkdir_p(pseudo_folder)
+
         # this is for debug purposes
         my_input_args = {'use_sliding_window': use_sliding_window,
                          'step_size': step_size,
@@ -777,7 +798,7 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
         save_json(my_input_args, join(output_folder, "predict_args.json"))
 
         do_mirroring = False
-        mirror_axes = None
+        mirror_axes = (0,)
         self.print_to_log_file("running predictions for unlabeled data...")
         predict_start_time = time()
         for k in self.dataset_trul.keys():
@@ -806,4 +827,4 @@ class SS_nnUNetTrainer_tri(nnUNetTrainer):
         self.print_to_log_file(f"predictions took {predict_end_time - predict_start_time} s")
         self.network.train(current_mode)
         self.network.do_ds = ds
-        return
+        return output_folder

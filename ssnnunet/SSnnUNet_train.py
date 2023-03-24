@@ -14,6 +14,7 @@
 
 
 import argparse
+import os
 from batchgenerators.utilities.file_and_folder_operations import *
 from nnunet.run.default_configuration import get_default_configuration
 from nnunet.training.cascade_stuff.predict_next_stage import predict_next_stage
@@ -30,13 +31,13 @@ def main():
     parser.add_argument("task", help="can be task name or task id")
     parser.add_argument("-val", "--validation_only", help="use this if you want to only run the validation",
                         action="store_true")
-    parser.add_argument("-cf", "--continue_training_full",
+    parser.add_argument("-cf",
                         help="use this if you want to continue a fully-supervised training",
                         action="store_true")
-    parser.add_argument("-cs", "--continue_training_semi",
+    parser.add_argument("-cs",
                         help="use this if you want to continue a semi-supervised training",
                         action="store_true")
-    parser.add_argument("-ss", "--start_training_semi", help="use this if you want to start semi-supervised training. "
+    parser.add_argument("-ss", help="use this if you want to start semi-supervised training. "
                                                              "(must have completed fully-supervised training)",
                         action="store_true")
     parser.add_argument("-p", help="data identifier. Only change this if you created a custom experiment planner",
@@ -57,6 +58,7 @@ def main():
                              "only interested in the results and want to save some disk space")
     parser.add_argument('--val_disable_overwrite', action='store_false', default=True,
                         help='Validation does not overwrite existing segmentations')
+    parser.add_argument('-gpu', type=int, help="which gpu would you like to use?")
 
     args = parser.parse_args()
 
@@ -66,6 +68,7 @@ def main():
     plans_identifier = args.p
     fp32 = args.fp32
     run_mixed_precision = not fp32
+
 
     validation_only = args.validation_only
     cf = args.cf

@@ -405,8 +405,9 @@ class SS_DataLoader3D(SlimDataLoaderBase):
         :param oversample_foreground: half the batch will be forced to contain at least some foreground (equal prob for each of the foreground classes)
         :param pseudo_data: pseudo-labeled data in the same format as data (obtained with load_dataset).
         """
-        assert batch_size > 3, "semi-supervised learning requires at least 4 in the batch"
-        super(DataLoader3D, self).__init__(data, batch_size, None)
+        # assert batch_size > 3, "semi-supervised learning requires at least 4 in the batch"
+        super().__init__(data, batch_size, None)
+        self.batch_size = self.batch_size // 2
         if pad_kwargs_data is None:
             pad_kwargs_data = OrderedDict()
         self.pad_kwargs_data = pad_kwargs_data
@@ -430,7 +431,8 @@ class SS_DataLoader3D(SlimDataLoaderBase):
 
         self.pseudo_data = pseudo_data
         self.pseudo_percentage = 0.25
-        self.list_of_keys_pseudo = list(self.pseudo_data.keys())
+        if self.pseudo_data is not None:
+            self.list_of_keys_pseudo = list(self.pseudo_data.keys())
 
     def get_do_oversample(self, batch_idx):
         return not batch_idx < round(self.batch_size * (1 - self.oversample_foreground_percent))
@@ -453,13 +455,13 @@ class SS_DataLoader3D(SlimDataLoaderBase):
 
     def generate_train_batch(self):
         if self.pseudo_data is None:
-            self.generate_train_batch_full()
+            return self.generate_train_batch_full()
         elif isinstance(self.pseudo_data, OrderedDict):
-            if self.patch_size == self.final_patch_size:
-                print("pseudo labels are only self.final_patch_size in size: self-training")
-            else:
-                print("pseudo labels are self.patch_size in size: tri-training")
-            self.generate_train_batch_semi()
+            #if np.all(self.patch_size == self.final_patch_size):
+            #    print("pseudo labels are only self.final_patch_size in size: self-training")
+            #else:
+            #    print("pseudo labels are self.patch_size in size: tri-training")
+            return self.generate_train_batch_semi()
         else:
             raise RuntimeError
 
@@ -765,7 +767,6 @@ class SS_DataLoader3D(SlimDataLoaderBase):
         #     index = a + label_count
         #     data[index] = np.copy(case_all_data[:-1])
         #     seg[index, 0] = np.copy(case_all_data[-1:])
-
         assert len(data) == len(seg) == len(case_properties) == len(selected_keys)
         return {'data': data, 'seg': seg, 'properties': case_properties, 'keys': selected_keys}
 
@@ -1013,8 +1014,9 @@ class SS_DataLoader2D(SlimDataLoaderBase):
         :param pseudo_3d_slices: 7 = 3 below and 3 above the center slice
         :param pseudo_data: this is pseudo-labeled data in the same format as data (obtained from load_dataset())
         """
-        super(DataLoader2D, self).__init__(data, batch_size, None)
-        assert batch_size > 3, "self-supervised training requires a batch size of 4 or greater."
+        super().__init__(data, batch_size, None)
+        # assert batch_size > 3, "self-supervised training requires a batch size of 4 or greater."
+        self.batch_size = self.batch_size // 2
         if pad_kwargs_data is None:
             pad_kwargs_data = OrderedDict()
         self.pad_kwargs_data = pad_kwargs_data
@@ -1035,7 +1037,8 @@ class SS_DataLoader2D(SlimDataLoaderBase):
 
         self.pseudo_data = pseudo_data
         self.pseudo_percentage = 0.25
-        self.list_of_keys_pseudo = list(self.pseudo_data.keys())
+        if self.pseudo_data is not None:
+            self.list_of_keys_pseudo = list(self.pseudo_data.keys())
         
     def determine_shapes(self):
         num_seg = 1
@@ -1055,13 +1058,13 @@ class SS_DataLoader2D(SlimDataLoaderBase):
 
     def generate_train_batch(self):
         if self.pseudo_data is None:
-            self.generate_train_batch_full()
+            return self.generate_train_batch_full()
         elif isinstance(self.pseudo_data, OrderedDict):
-            if self.patch_size == self.final_patch_size:
-                print("pseudo labels are only self.final_patch_size in size: self-training")
-            else:
-                print("pseudo labels are self.patch_size in size: tri-training")
-            self.generate_train_batch_semi()
+            # if self.patch_size == self.final_patch_size:
+            #     print("pseudo labels are only self.final_patch_size in size: self-training")
+            # else:
+            #     print("pseudo labels are self.patch_size in size: tri-training")
+            return self.generate_train_batch_semi()
         else:
             raise RuntimeError
         

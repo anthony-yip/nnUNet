@@ -30,9 +30,9 @@ def main():
     parser.add_argument("task", help="can be task name or task id")
     parser.add_argument("-val", "--validation_only", help="use this if you want to only run the validation",
                         action="store_true")
-    # parser.add_argument("-cf", "--continue_training_full",
-    #                     help="use this if you want to continue a fully-supervised training",
-    #                     action="store_true")
+    parser.add_argument("-cf", "--continue_training_full",
+                        help="use this if you want to continue a fully-supervised training",
+                        action="store_true")
     # parser.add_argument("-cs", "--continue_training_semi",
     #                     help="use this if you want to continue a semi-supervised training",
     #                     action="store_true")
@@ -57,6 +57,9 @@ def main():
                              "only interested in the results and want to save some disk space")
     parser.add_argument('--val_disable_overwrite', action='store_false', default=True,
                         help='Validation does not overwrite existing segmentations')
+    parser.add_argument("--supervised_mode", type=str, help='Either full or semi.')
+    parser.add_argument("--epoch", type=str, help='Used for semi-supervised portion of training. Which epoch to start from? Usually multiples of 100')
+    parser.add_argument("--final_epoch", action='store_true', help='Is this the final epoch?')
 
     args = parser.parse_args()
     task = args.task
@@ -66,11 +69,15 @@ def main():
     fp32 = args.fp32
     run_mixed_precision = not fp32
     validation_only = args.validation_only
+    supervised = args.supervised_mode
+    assert supervised in ["full", "semi"], "--supervised_mode option must either be full or semi"
+    continue_training_full = args.continue_training_full
 
     if not task.startswith("Task"):
         task_id = int(task)
         task = convert_id_to_task_name(task_id)
-
+    assert task == "Task104_LiverSSTri", "wrong task"
+    
     plans_file, output_folder_name, dataset_directory, batch_dice, stage, \
         trainer_class = get_default_configuration(network, task, network_trainer, plans_identifier)
 
@@ -78,14 +85,15 @@ def main():
         raise RuntimeError("Could not find trainer class in nnunet.training.network_training")
     assert issubclass(trainer_class, nnUNetTrainer)
 
-    # output_folder_name = nnUNet_trained_models/nnUNet_3d_fullres/Task104_LiverSSTri/SS_nnUNetTrainer_tri__SS_nnUNet_plannerv21
+    learning_rate = 5e-4
+    # output_folder_name = nnUNet_trained_models/nnUNet/3d_fullres/Task104_LiverSSTri/SS_nnUNetTrainer_tri__SS_nnUNet_plannerv21
     # dataset_directory = nnUNet_preprocessed/Task104_LiverSSTri
     # batch_dice = True
     # plans_file = nnUNet_preprocessed/Task104_LiverSSTri/SS_nnUNet_plannerv21_plans_3D.pkl
     trainer = trainer_class(plans_file, output_folder=output_folder_name, dataset_directory=dataset_directory,
                             batch_dice=batch_dice, stage=stage,
                             deterministic=False,
-                            fp16=run_mixed_precision)
+                            fp16=run_mixed_precision, learning_rate=learning_rate)
     if args.disable_saving:
         trainer.save_final_checkpoint = False  # whether or not to save the final checkpoint
         trainer.save_best_checkpoint = False  # whether or not to save the best checkpoint according to
@@ -95,42 +103,23 @@ def main():
         trainer.save_latest_only = True  # if false it will not store/overwrite _latest but separate files each
 
     trainer.initialize(not validation_only)
-    trainer.run_training(supervised='full')
-    trainer.network.eval()
-    trainer.validate()
-    for i in range(10):
-        # SS_run_voting()
+    if supervised == "full":
+        if continue_training_full:
+            trainer.load_latest_checkpoint(supervised='full')
+        trainer.run_training(supervised='full')
+        trainer.network.eval()
+        trainer.validate(save_softmax=args.npz, run_postprocessing_on_folds=False, overwrite=args.val_disable_overwrite,
+                          validation_folder_name="validation_raw_FS")
+    elif supervised == "semi":
+        epoch = args.epoch
+        trainer.load_epoch_checkpoint(epoch)
+        assert trainer.epoch == int(epoch), f"epoch mismatch: {trainer.epoch} vs {int(epoch)}"
+        trainer.save_latest_only = False
         trainer.run_training(supervised='semi')
-    trainer.network.eval()
-    trainer.validate()
-
-    # if not (ss or cs):
-    #     if not validation_only:
-    #         if cf:
-    #             # -cf was set, continue a previous fully-supervised training
-    #             trainer.load_latest_checkpoint(supervised='full')
-    #         trainer.run_training(supervised="full")
-    #     else:
-    #         trainer.load_FS_checkpoint(train=False)
-    #     # set to evaluation mode and predict validation for fully-supervised
-    #     trainer.network.eval()
-    #     trainer.validate(save_softmax=args.npz, run_postprocessing_on_folds=False, overwrite=args.val_disable_overwrite,
-    #                      validation_folder_name="validation_raw_FS")
-    #
-    # if not validation_only:
-    #     if cs:
-    #         # -cs was set, continue a previous semi-supervised training
-    #         trainer.load_latest_checkpoint(supervised='semi')
-    #     elif ss:
-    #         # -ss was set, starting a new semi-supervised training
-    #         trainer.load_FS_checkpoint(train=True)
-    #     trainer.run_training(supervised="semi")
-    # else:
-    #     trainer.load_final_checkpoint(train=False)
-    # # set to evaluation mode and predict validation for fully-supervised
-    # trainer.network.eval()
-    # trainer.validate(save_softmax=args.npz, run_postprocessing_on_folds=False, overwrite=args.val_disable_overwrite,
-    #                  validation_folder_name="validation_raw_SS")
+        if args.final_epoch:
+            trainer.network.eval()
+            trainer.validate(save_softmax=args.npz, run_postprocessing_on_folds=False, overwrite=args.val_disable_overwrite,
+                          validation_folder_name="validation_raw_SS")
 
 
 if __name__ == "__main__":

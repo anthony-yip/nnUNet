@@ -31,17 +31,17 @@ def get_case_identifiers(folder):
 
 def dice(a, b):
     # a and b are numpy arrays with shape (c, x, y, z), where c is the number of classes
-    a = a.astype(int)
-    b = b.astype(int)
-    tp = a * b
-    fp = a * (1-b)
-    fn = (1-a) * b
+    tp = a & b
+    fp = a & np.logical_not(b)
+    fn = np.logical_not(a) & b
     axes = (1, 2, 3)
     tp = np.sum(tp, axis=axes)
     fp = np.sum(fp, axis=axes)
-    fn - np.sum(fn, axis=axes)
+    fn = np.sum(fn, axis=axes)
     dc = (2 * tp) / (2 * tp + fp + fn + 1e-8)
-    return dc.mean()
+    print(dc)
+    return dc[1:].mean()
+
 
 def get_plans_identifier(num):
     if num == 0:
@@ -55,7 +55,7 @@ def get_plans_identifier(num):
 def resample_seg_and_append(data, seg, properties, transpose=[0,1,2]):
     assert len(data.shape) == 4, "data must be c x y z"
     assert len(seg.shape) == 4, "seg must be 1 x y z"
-
+    seg = seg.transpose((0, *[i + 1 for i in transpose]))
     new_shape = data[0].shape
     assert new_shape == properties.get("size_after_resampling"), "size in data and properties don't match."
 
@@ -80,13 +80,13 @@ def resample_seg_and_append(data, seg, properties, transpose=[0,1,2]):
 
 
 def main():
-    task_name = "Task106_LiverSSTri"
+    task_name = "Task104_LiverSSTri"
     transpose = [0, 1, 2]
-    trainer_planner = "SS_nnUNetTrainer_tri__SS_nnUNet_plannerv21"
+    trainer_planner = "SS_nnUNetTrainer_tri__SS_nnUNet_plannerv21/all"
     networks = ["2d", "3d_fullres", "3d_lowres"]
 
     # obtain list of case identifiers and verify each folder has the same case identifiers.
-    case_identifiers = []
+    case_identifiers = [None, None, None]
     for i, network in enumerate(networks):
         folder = join(network_training_output_dir, network, task_name, trainer_planner, "predicted_unlabeled_data")
         case_identifiers[i] = get_case_identifiers(folder)
@@ -96,30 +96,32 @@ def main():
 
     # begin main loop
     for identifier in case_identifiers:
-        one_hot_list = []
+        one_hot_list = [None, None, None]
         print(f"processing {identifier}...")
         for i, network in enumerate(networks):
-            fname = join(network_training_output_dir, network, task_name, trainer_planner, identifier + ".npz")
+            fname = join(network_training_output_dir, network, task_name, trainer_planner, "predicted_unlabeled_data", identifier + ".npz")
             one_hot_list[i] = np.load(fname)["one_hot"]
         assert one_hot_list[0].shape == one_hot_list[1].shape == one_hot_list[2].shape, "one_hots are different sizes."
         dice_AB = dice(one_hot_list[0], one_hot_list[1])
         dice_BC = dice(one_hot_list[1], one_hot_list[2])
-        dice_AC = dice(one_hot_list[0], one_hot_list[2])
-        # this order is in the order of the excluded seg map i.e. A, B, C or 2d, 3d_fullres, 3d_lowres
+        dice_AC = dice(one_hot_list[0], one_hot_list[2])        
         dices = [dice_BC, dice_AC, dice_AB]
+        # this order is in the order of the excluded seg map i.e. A, B, C or 2d, 3d_fullres, 3d_lowres
         print(f"Dice scores:\n3d_fullres and 3d_lowres: {dice_BC}\n2d and 3d_lowres: {dice_AC}\n2d and 3d_fullres:{dice_AB}")
-        assert dice_BC != dice_AC != dice_AB, "how did this happen"
+        if np.amax(dices) < 0.8:
+            print("Dices suck, go next.")
+            continue
 
+        into_index = np.argmax(dices)
         from_index = 3 - into_index - np.argmin(dices)
         seg = np.argmax(one_hot_list[from_index], 0, keepdims=True)
-        folder_with_preprocessed_npz = join(preprocessing_output_dir, task_name, "imagesTrUL", get_plans_identifier(from_index))
+        folder_with_preprocessed_npz = join(preprocessing_output_dir, task_name, "imagesTrUL", get_plans_identifier(into_index))
         data = np.load(join(folder_with_preprocessed_npz, identifier + ".npz"))["data"]
         prop = load_pickle(join(folder_with_preprocessed_npz, identifier + ".pkl"))
         print(f"combining segmentation from {networks[from_index]} and data from {folder_with_preprocessed_npz}")
         
         data_pseudo = resample_seg_and_append(data, seg, prop, transpose)
-
-        into_index = np.argmax(dices)
+        
         into_network = networks[into_index]
         fname_base = join(network_training_output_dir, into_network, task_name, trainer_planner, "pseudo_labeled_data")
         data_fname = join(fname_base, identifier + ".npz")
@@ -128,3 +130,6 @@ def main():
         write_pickle(prop, prop_fname)
         print(f"finished writing to {data_fname}.")
         # also don't forget to change the SS_nnUNet_train_tri back to the normal.
+
+if __name__ == "__main__":
+    main()

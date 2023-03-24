@@ -384,19 +384,6 @@ class NetworkTrainer(object):
             self.best_epoch_based_on_MA_tr_loss, self.best_MA_tr_loss_for_patience, self.best_val_eval_criterion_MA = checkpoint[
                 'best_stuff']
 
-        # after the training is done, the epoch is incremented one more time in my old code. This results in
-        # self.epoch = 1001 for old trained models when the epoch is actually 1000. This causes issues because
-        # len(self.all_tr_losses) = 1000 and the plot function will fail. We can easily detect and correct that here
-        if self.epoch != len(self.all_tr_losses):
-            self.print_to_log_file("WARNING in loading checkpoint: self.epoch != len(self.all_tr_losses). This is "
-                                   "due to an old bug and should only appear when you are loading old models. New "
-                                   "models should have this fixed! self.epoch is now set to len(self.all_tr_losses)")
-            self.epoch = len(self.all_tr_losses)
-            self.all_tr_losses = self.all_tr_losses[:self.epoch]
-            self.all_val_losses = self.all_val_losses[:self.epoch]
-            self.all_val_losses_tr_mode = self.all_val_losses_tr_mode[:self.epoch]
-            self.all_val_eval_metrics = self.all_val_eval_metrics[:self.epoch]
-
         self._maybe_init_amp()
 
     def _maybe_init_amp(self):

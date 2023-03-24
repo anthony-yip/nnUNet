@@ -66,7 +66,7 @@ class SS_nnUNetTrainer(nnUNetTrainer):
         self.dataset_trul = None
         self.datasets = OrderedDict()
         self.supervised_mode = None
-        self.confidence_threshold = 0.8
+        self.confidence_threshold = 0.995
 
     def initialize(self, training=True, force_load_plans=False):
         """
@@ -108,6 +108,7 @@ class SS_nnUNetTrainer(nnUNetTrainer):
             # prepare the dataloaders and augmenters
             if training:
                 self.dl_tr, self.dl_val, self.dl_trul = self.get_basic_generators()
+                assert next(self.dl_tr) is not None
                 # time how long it takes to do this
                 self.tr_gen = get_moreDA_augmentation_train(
                     self.dl_tr, self.data_aug_params['patch_size_for_spatialtransform'], self.data_aug_params,
@@ -188,11 +189,10 @@ class SS_nnUNetTrainer(nnUNetTrainer):
             folder_with_preprocessed_data = join(self.dataset_directory, subfolder, self.plans['data_identifier'] +
                                                  "_stage%d" % self.stage)
             self.datasets[subfolder] = load_dataset(folder_with_preprocessed_data)
-            print(self.datasets)
             if self.unpack_data:
-                print("unpacking subfolder: ", subfolder)
+                self.print_to_log_file("unpacking subfolder: ", subfolder)
                 unpack_dataset(folder_with_preprocessed_data)
-                print("done")
+                self.print_to_log_file("done")
         # this is for the first phase of training with purely labeled data. We will amend the data loader after each epoch.
         self.dataset_tr = self.datasets["imagesTrL"]
         self.dataset_val = self.datasets["imagesVal"]
@@ -209,7 +209,6 @@ class SS_nnUNetTrainer(nnUNetTrainer):
                                      oversample_foreground_percent=self.oversample_foreground_percent,
                                      pad_mode="constant", pad_sides=self.pad_all_sides, memmap_mode='r')
             dl_trul = SS_DataLoader3D(self.dataset_trul, self.patch_size, self.patch_size, self.batch_size, False,
-                                      oversample_foreground_percent=self.oversample_foreground_percent,
                                       pad_mode="constant", pad_sides=self.pad_all_sides, memmap_mode='r')
         else:
             dl_tr = DataLoader2D(self.dataset_tr, self.basic_generator_patch_size, self.patch_size, self.batch_size,
@@ -631,7 +630,6 @@ class SS_nnUNetTrainer(nnUNetTrainer):
 
         if not self.was_initialized:
             self.initialize(True)
-
         while self.epoch < self.max_num_epochs:
             self.print_to_log_file("\nepoch: ", self.epoch)
             epoch_start_time = time()
@@ -717,16 +715,18 @@ class SS_nnUNetTrainer(nnUNetTrainer):
                 # (4, C, D, L, W)
                 assert len(output.shape) == 5
                 # ndarray of length self.batch_size
-                keys = data_dict["keys"]
-                values, indices = output.max(1, keepdim=True)
+                keys = data_dict["keys" ]
+                indices = output.argmax(1, keepdims=True)
+                values = output.max(1, keepdims=True)
                 confidence = values.mean((1, 2, 3, 4))
+                self.print_to_log_file(confidence)
                 for j, score in enumerate(confidence):
                     if score > self.confidence_threshold:
-                        new_data = np.vstack(data[j], indices[j])
-                        assert new_data.dtype == np.float32
+                        new_data = np.vstack((data[j], indices[j]), dtype=np.float32)
+                        assert new_data.dtype == np.float32, f"{new_data.dtype}, {data.dtype}, {indices.dtype}"
                         fname = join(pseudo_folder, keys[j] + ".npz")
                         np.savez_compressed(fname, data=new_data)
-                        properties_fname = join(self.dataset_directory, "TrUL", self.plans['data_identifier'] +
+                        properties_fname = join(self.dataset_directory, "imagesTrUL", self.plans['data_identifier'] +
                                                 "_stage%d" % self.stage, keys[j] + ".pkl")
                         shutil.copy(properties_fname, pseudo_folder)
                         confident_count += 1
@@ -747,15 +747,13 @@ class SS_nnUNetTrainer(nnUNetTrainer):
 
         if self.fp16:
             with autocast():
-                output = self.network(data)
-                del data
+                output = softmax_helper(self.network(data))
         else:
-            output = self.network(data)
-            del data
+            output = softmax_helper(self.network(data))
 
         assert isinstance(output, torch.Tensor)
 
-        return output.detach().cpu().numpy(), data, data_dict
+        return output.detach().cpu().numpy(), data.detach().cpu().numpy(), data_dict
 
     def recompute_generators(self):
         folder_with_pseudo_labeled_data = join(self.output_folder, "pseudo_labeled_data")

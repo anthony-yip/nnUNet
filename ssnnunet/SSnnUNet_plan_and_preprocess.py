@@ -35,7 +35,7 @@ def main():
     tri_train = args.tri
 
     if tri_train:
-        assert planner_name_3d != "None" and planner_name_2d != "None", "tri-training requires both 2d and 3d."
+        # assert planner_name_3d != "None" and planner_name_2d != "None", "tri-training requires both 2d and 3d."
         assert not ignore_unlabeled, "tri-training requires unlabeled data."
 
     # look for experiment planners
@@ -79,7 +79,7 @@ def main():
 
     maybe_mkdir_p(preprocessing_output_dir_this_task)
     shutil.copy(join(cropped_out_dir, "dataset_properties.pkl"), preprocessing_output_dir_this_task)
-    shutil.copy(join(nnUNet_raw_data, task_name, "dataset.json"), preprocessing_output_dir_this_task)
+    shutil.copy(join(cropped_out_dir, "dataset.json"), preprocessing_output_dir_this_task)
     maybe_mkdir_p(join(preprocessing_output_dir_this_task, "imagesTrL"))
     if not ignore_unlabeled:
         maybe_mkdir_p(join(preprocessing_output_dir_this_task, "imagesTrUL"))
@@ -95,12 +95,12 @@ def main():
         print("\nrunning preprocessing for 3D:")
         exp_planner.run_preprocessing((cores, cores))
     if planner_2d is not None and tri_train:
-        exp_planner = planner_2d(cropped_out_dir, preprocessing_output_dir_this_task, vram, ignore_unlabeled=ignore_unlabeled)
+        exp_planner = planner_2d(cropped_out_dir, preprocessing_output_dir_this_task, vram)
         print("\nplanning experiment for 2D:")
         exp_planner.plan_experiment()
 
         print("\nrunning preprocessing for 2D:")
-        exp_planner.run_preprocessing((cores, cores))
+        exp_planner.run_preprocessing(cores)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ def main():
     parser.add_argument("task", help="can be task name or task id")
     parser.add_argument("-val", "--validation_only", help="use this if you want to only run the validation",
                         action="store_true")
-    parser.add_argument("-c", "--continue_training", help="use this if you want to continue a training",
+    parser.add_argument("-c", help="use this if you want to continue a training",
                         action="store_true")
     parser.add_argument("-p", help="data identifier. Only change this if you created a custom experiment planner",
                         default="SS_nnUNet_plannerv21", required=False)
@@ -50,7 +50,7 @@ def main():
                              "only interested in the results and want to save some disk space")
     parser.add_argument('--val_disable_overwrite', action='store_false', default=True,
                         help='Validation does not overwrite existing segmentations')
-
+    parser.add_argument('-gpu', type=int,  help='Which GPU would you like to use?')
     args = parser.parse_args()
 
     task = args.task
@@ -59,6 +59,7 @@ def main():
     plans_identifier = args.p
     fp32 = args.fp32
     run_mixed_precision = not fp32
+    gpu = args.gpu
 
     validation_only = args.validation_only
     continue_training = args.c
@@ -101,7 +102,7 @@ def main():
     trainer.initialize(not validation_only)
 
     if not validation_only:
-        if args.continue_training:
+        if continue_training:
             # -c was set, continue a previous training
             trainer.load_latest_checkpoint()
         trainer.run_training()

@@ -21,7 +21,7 @@ from nnunet.training.network_training.nnUNet_variants.architectural_variants.nnU
 from nnunet.training.network_training.nnUNet_variants.benchmarking.nnUNetTrainerV2_2epochs import nnUNetTrainerV2_5epochs
 from torch.cuda.amp import autocast
 import numpy as np
-
+from time import time
 
 class nnUNetTrainerV2_5epochs_dummyLoad(nnUNetTrainerV2_5epochs):
     def initialize(self, training=True, force_load_plans=False):
@@ -41,7 +41,6 @@ class nnUNetTrainerV2_5epochs_dummyLoad(nnUNetTrainerV2_5epochs):
                 output = self.network(data)
                 del data
                 l = self.loss(output, target)
-
             if do_backprop:
                 self.amp_grad_scaler.scale(l).backward()
                 self.amp_grad_scaler.unscale_(self.optimizer)
@@ -57,7 +56,6 @@ class nnUNetTrainerV2_5epochs_dummyLoad(nnUNetTrainerV2_5epochs):
                 l.backward()
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
                 self.optimizer.step()
-
         if run_online_evaluation:
             self.run_online_evaluation(output, target)
 

@@ -88,10 +88,7 @@ class SS_ExperimentPlanner3D_v21(ExperimentPlanner3D_v21):
                                 "SS_nnUNet_plannerv21_plans_3D.pkl")
         self.vram_size = vram_size
         self.tri_train = tri_train
-        if self.tri_train:
-            self.vram_size //= 3
-            self.unet_min_batch_size = 2
-        else:
+        if not self.tri_train:
             # this is so that only fullres is computed
             self.how_much_of_a_patient_must_the_network_see_at_stage0 = 1000
 
