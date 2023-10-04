@@ -179,6 +179,7 @@ class DatasetAnalyzer(object):
         return median, mean, sd, mn, mx, percentile_99_5, percentile_00_5
 
     def collect_intensity_properties(self, num_modalities):
+        # gets intensity properties, both global (for CT images), and on a per-patient basis
         if self.overwrite or not isfile(self.intensityproperties_file):
             p = Pool(self.num_processes)
 

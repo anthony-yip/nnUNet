@@ -64,6 +64,7 @@ class ExperimentPlanner(object):
         self.conv_per_stage = 2
 
     def get_target_spacing(self):
+        # returns a length-3 array of the median spacing along each axis
         spacings = self.dataset_properties['all_spacings']
 
         # target = np.median(np.vstack(spacings), 0)
@@ -261,7 +262,6 @@ class ExperimentPlanner(object):
         remaining_axes = [i for i in list(range(3)) if i != max_spacing_axis]
         self.transpose_forward = [max_spacing_axis] + remaining_axes
         self.transpose_backward = [np.argwhere(np.array(self.transpose_forward) == i)[0][0] for i in range(3)]
-
         # we base our calculations on the median shape of the datasets
         median_shape = np.median(np.vstack(new_shapes), 0)
         print("the median shape of the dataset is ", median_shape)
@@ -276,7 +276,9 @@ class ExperimentPlanner(object):
         # how many stages will the image pyramid have?
         self.plans_per_stage = list()
 
+        # transpose spacing and shape such that axis with the largest spacing is first.
         target_spacing_transposed = np.array(target_spacing)[self.transpose_forward]
+        print("the target spacing of the dataset (transposed) is ,", target_spacing_transposed)
         median_shape_transposed = np.array(median_shape)[self.transpose_forward]
         print("the transposed median shape of the dataset is ", median_shape_transposed)
 
@@ -396,15 +398,16 @@ class ExperimentPlanner(object):
                     all_size_reductions.append(self.dataset_properties['size_reductions'][k])
 
                 if np.median(all_size_reductions) < 3 / 4.:
-                    print("using nonzero mask for normalization")
+                    # print("using nonzero mask for normalization")
                     use_nonzero_mask_for_norm[i] = True
                 else:
-                    print("not using nonzero mask for normalization")
+                    # print("not using nonzero mask for normalization")
                     use_nonzero_mask_for_norm[i] = False
 
         for c in self.list_of_cropped_npz_files:
             case_identifier = get_case_identifier_from_npz(c)
             properties = self.load_properties_of_cropped(case_identifier)
+            assert properties is not None, case_identifier
             properties['use_nonzero_mask_for_norm'] = use_nonzero_mask_for_norm
             self.save_properties_of_cropped(case_identifier, properties)
         use_nonzero_mask_for_normalization = use_nonzero_mask_for_norm

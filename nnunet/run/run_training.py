@@ -160,7 +160,7 @@ def main():
         trainer.save_best_checkpoint = False  # whether or not to save the best checkpoint according to
         # self.best_val_eval_criterion_MA
         trainer.save_intermediate_checkpoints = True  # whether or not to save checkpoint_latest. We need that in case
-        # the training chashes
+        # the training cashes
         trainer.save_latest_only = True  # if false it will not store/overwrite _latest but separate files each
 
     trainer.initialize(not validation_only)
@@ -182,10 +182,11 @@ def main():
             trainer.run_training()
         else:
             if valbest:
+                # this doesn't happen
                 trainer.load_best_checkpoint(train=False)
             else:
                 trainer.load_final_checkpoint(train=False)
-
+        # set to evaluation mode
         trainer.network.eval()
 
         if args.disable_validation_inference:

@@ -138,6 +138,7 @@ def main():
         modalities = list(dataset_json["modality"].values())
         collect_intensityproperties = True if (("CT" in modalities) or ("ct" in modalities)) else False
         dataset_analyzer = DatasetAnalyzer(cropped_out_dir, overwrite=False, num_processes=tf)  # this class creates the fingerprint
+        print("analyzing dataset, creating dataset fingerprint")
         _ = dataset_analyzer.analyze_dataset(collect_intensityproperties)  # this will write output files that will be used by the ExperimentPlanner
 
 
@@ -156,13 +157,17 @@ def main():
                                          args.overwrite_plans_identifier)
             else:
                 exp_planner = planner_3d(cropped_out_dir, preprocessing_output_dir_this_task)
+            print("planning experiment for 3D:")
             exp_planner.plan_experiment()
             if not dont_run_preprocessing:  # double negative, yooo
+                print("\nrunning preprocessing for 3D:")
                 exp_planner.run_preprocessing(threads)
         if planner_2d is not None:
             exp_planner = planner_2d(cropped_out_dir, preprocessing_output_dir_this_task)
+            print("\nplanning experiment for 2D:")
             exp_planner.plan_experiment()
             if not dont_run_preprocessing:  # double negative, yooo
+                print("\nrunning preprocessing for 2D:")
                 exp_planner.run_preprocessing(threads)
 
 

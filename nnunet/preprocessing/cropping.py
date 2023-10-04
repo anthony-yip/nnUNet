@@ -206,6 +206,38 @@ class ImageCropper(object):
         p.close()
         p.join()
 
+
+    def ss_run_cropping(self, list_of_files, cropped_folder, subfolder_marker, overwrite_existing=False):
+        """
+        also copied ground truth nifti segmentation into the preprocessed folder so that we can use them for evaluation
+        on the cluster
+        :param list_of_files: list of list of files [[PATIENTID_TIMESTEP_0000.nii.gz], [PATIENTID_TIMESTEP_0000.nii.gz]]
+        :param overwrite_existing:
+        :param output_folder:
+        :return:
+        """
+        self.output_folder = join(cropped_folder, subfolder_marker)
+        maybe_mkdir_p(self.output_folder)
+
+        if list_of_files[0][-1] is not None:
+            # data is labeled
+            output_folder_gt = os.path.join(self.output_folder, "gt_segmentations")
+            maybe_mkdir_p(output_folder_gt)
+            for j, case in enumerate(list_of_files):
+                if case[-1] is not None:
+                    shutil.copy(case[-1], output_folder_gt)
+
+        list_of_args = []
+        for j, case in enumerate(list_of_files):
+            case_identifier = get_case_identifier(case)
+            list_of_args.append((case, case_identifier, overwrite_existing))
+
+        p = Pool(self.num_threads)
+        p.starmap(self.load_crop_save, list_of_args)
+        p.close()
+        p.join()
+
+
     def load_properties(self, case_identifier):
         with open(os.path.join(self.output_folder, "%s.pkl" % case_identifier), 'rb') as f:
             properties = pickle.load(f)
